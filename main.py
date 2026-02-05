@@ -4,10 +4,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
 import joblib, numpy as np, os
-
+from models import Prediction, User
 from schemas import AQIRequest, AQIResponse
 from database import get_db, Base, engine
-from models import Prediction, User
+
 from auth_utils import hash_password, verify_password
 
 # ---- INIT DB (CRITICAL) ----
