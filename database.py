@@ -2,11 +2,17 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_NAME = os.getenv("DB_NAME")
+def must_env(key: str) -> str:
+    value = os.getenv(key)
+    if not value:
+        raise RuntimeError(f"Missing environment variable: {key}")
+    return value
+
+DB_HOST = must_env("DB_HOST")
+DB_PORT = must_env("DB_PORT")
+DB_USER = must_env("DB_USER")
+DB_PASSWORD = must_env("DB_PASSWORD")
+DB_NAME = must_env("DB_NAME")
 
 DATABASE_URL = (
     f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}"
@@ -16,6 +22,7 @@ DATABASE_URL = (
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
+    pool_recycle=280,
     connect_args={
         "ssl": {"ssl_mode": "REQUIRED"}
     }
