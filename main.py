@@ -1,44 +1,41 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
 import joblib
 import numpy as np
+import os
 
 from schemas import AQIRequest, AQIResponse
 from database import get_db
-from models import Prediction
-from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from models import Prediction, User
 from auth_utils import hash_password, verify_password
-from models import User
-from database import get_db
-import os
 
+# ---------------- BASIC SETUP ----------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 app = FastAPI(title="AQI Prediction API")
-
-
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://breathe-easy-aqi-frontend-sxk8.vercel.app",
-        "http://localhost:5173",   # for local dev
-        "http://localhost:3000"
+        "http://localhost:5173",
+        "http://localhost:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ---------------- LOAD ML MODELS ----------------
 model = joblib.load(os.path.join(BASE_DIR, "ml/aqi_model.pkl"))
 state_encoder = joblib.load(os.path.join(BASE_DIR, "state_encoder.pkl"))
 location_encoder = joblib.load(os.path.join(BASE_DIR, "location_encoder.pkl"))
 type_encoder = joblib.load(os.path.join(BASE_DIR, "type_encoder.pkl"))
 
+# ---------------- NORMALIZATION MAPS ----------------
 LOCATION_MAP = {
     "New Delhi": "Delhi",
     "East Delhi": "Delhi",
@@ -56,6 +53,7 @@ AREA_TYPE_MAP = {
     "Urban": "Residential, Rural and other Areas",
 }
 
+# ---------------- HELPERS ----------------
 def normalize(value: str, mapping: dict) -> str:
     return mapping.get(value, value)
 
@@ -77,9 +75,9 @@ def get_aqi_category(aqi: float) -> str:
         return "Poor"
     elif aqi <= 400:
         return "Very Poor"
-    else:
-        return "Severe"
+    return "Severe"
 
+# ---------------- PREDICT ----------------
 @app.post("/predict", response_model=AQIResponse)
 def predict_aqi(data: AQIRequest, db: Session = Depends(get_db)):
     state = normalize(data.state, {})
@@ -98,23 +96,47 @@ def predict_aqi(data: AQIRequest, db: Session = Depends(get_db)):
     predicted_aqi = float(model.predict(X)[0])
     category = get_aqi_category(predicted_aqi)
 
-    # db.add(Prediction(
-    #     state=state,
-    #     location=location,
-    #     area_type=area_type,
-    #     so2=data.so2,
-    #     no2=data.no2,
-    #     rspm=data.rspm,
-    #     predicted_aqi=predicted_aqi,
-    #     category=category,
-    # ))
-    # db.commit()
+    # ✅ STORE PREDICTION
+    db.add(Prediction(
+        state=state,
+        location=location,
+        area_type=area_type,
+        so2=data.so2,
+        no2=data.no2,
+        rspm=data.rspm,
+        predicted_aqi=predicted_aqi,
+        category=category,
+    ))
+    db.commit()
 
-    return {"predicted_aqi": predicted_aqi, "aqi_category": category}
+    return {
+        "predicted_aqi": predicted_aqi,
+        "aqi_category": category
+    }
 
+# ---------------- DASHBOARD ----------------
 @app.get("/dashboard")
 def dashboard(db: Session = Depends(get_db)):
     total_predictions = db.query(Prediction).count()
+
+    # ✅ SAFE EMPTY STATE (prevents 500)
+    if total_predictions == 0:
+        return {
+            "success": True,
+            "data": {
+                "latestAQI": 0,
+                "category": "Unknown",
+                "healthRisk": "No data yet",
+                "lastUpdated": None,
+                "trend": 0,
+                "stats": {
+                    "predictions": 0,
+                    "citiesMonitored": 0,
+                    "alertsIssued": 0,
+                },
+            },
+        }
+
     cities_monitored = db.query(Prediction.location).distinct().count()
 
     latest = (
@@ -143,10 +165,10 @@ def dashboard(db: Session = Depends(get_db)):
     return {
         "success": True,
         "data": {
-            "latestAQI": round(latest.predicted_aqi, 2) if latest else 0,
-            "category": latest.category if latest else "Unknown",
+            "latestAQI": round(latest.predicted_aqi, 2),
+            "category": latest.category,
             "healthRisk": "Based on latest AQI prediction",
-            "lastUpdated": latest.created_at.isoformat() if latest else None,
+            "lastUpdated": latest.created_at.isoformat(),
             "trend": trend,
             "stats": {
                 "predictions": total_predictions,
@@ -165,42 +187,26 @@ def metadata():
         "area_types": list(type_encoder.classes_),
     }
 
-
+# ---------------- AUTH ----------------
 @app.post("/signup")
-def signup(
-    name: str,
-    email: str,
-    password: str,
-    db: Session = Depends(get_db)
-):
-    existing_user = db.query(User).filter(User.email == email).first()
-
-    if existing_user:
+def signup(name: str, email: str, password: str, db: Session = Depends(get_db)):
+    if db.query(User).filter(User.email == email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
 
     user = User(
         name=name,
         email=email,
-        password_hash=hash_password(password)
+        password_hash=hash_password(password),
     )
 
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    return {
-        "success": True,
-        "message": "User registered successfully"
-    }
-
-
+    return {"success": True, "message": "User registered successfully"}
 
 @app.post("/login")
-def login(
-    email: str,
-    password: str,
-    db: Session = Depends(get_db)
-):
+def login(email: str, password: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email).first()
 
     if not user or not verify_password(password, user.password_hash):
@@ -211,10 +217,11 @@ def login(
         "user": {
             "id": user.id,
             "name": user.name,
-            "email": user.email
-        }
+            "email": user.email,
+        },
     }
 
+# ---------------- HEALTH ----------------
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
