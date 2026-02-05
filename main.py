@@ -3,18 +3,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
-import joblib
-import numpy as np
-import os
+import joblib, numpy as np, os
 
 from schemas import AQIRequest, AQIResponse
-from database import get_db
+from database import get_db, Base, engine
 from models import Prediction, User
 from auth_utils import hash_password, verify_password
 
-# ---------------- BASIC SETUP ----------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# ---- INIT DB (CRITICAL) ----
+Base.metadata.create_all(bind=engine)
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="AQI Prediction API")
 
 app.add_middleware(
@@ -29,199 +28,110 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------- LOAD ML MODELS ----------------
+# ---- LOAD MODELS ----
 model = joblib.load(os.path.join(BASE_DIR, "ml/aqi_model.pkl"))
 state_encoder = joblib.load(os.path.join(BASE_DIR, "state_encoder.pkl"))
 location_encoder = joblib.load(os.path.join(BASE_DIR, "location_encoder.pkl"))
 type_encoder = joblib.load(os.path.join(BASE_DIR, "type_encoder.pkl"))
 
-# ---------------- NORMALIZATION MAPS ----------------
-LOCATION_MAP = {
-    "New Delhi": "Delhi",
-    "East Delhi": "Delhi",
-    "West Delhi": "Delhi",
-    "North Delhi": "Delhi",
-    "South Delhi": "Delhi",
-    "Delhi NCR": "Delhi",
-}
-
+LOCATION_MAP = {"Delhi NCR": "Delhi"}
 AREA_TYPE_MAP = {
     "Commercial": "Industrial Areas",
-    "Commercial Area": "Industrial Areas",
     "Industrial": "Industrial Areas",
     "Residential": "Residential, Rural and other Areas",
-    "Urban": "Residential, Rural and other Areas",
 }
 
-# ---------------- HELPERS ----------------
-def normalize(value: str, mapping: dict) -> str:
-    return mapping.get(value, value)
+def safe_encode(enc, val):
+    return int(enc.transform([val])[0]) if val in enc.classes_ else 0
 
-def safe_encode(encoder, value: str) -> int:
-    if value in encoder.classes_:
-        return int(encoder.transform([value])[0])
-    if "unknown" in encoder.classes_:
-        return int(encoder.transform(["unknown"])[0])
-    return int(encoder.transform([encoder.classes_[0]])[0])
+def get_aqi_category(aqi):
+    return (
+        "Good" if aqi <= 50 else
+        "Satisfactory" if aqi <= 100 else
+        "Moderate" if aqi <= 200 else
+        "Poor" if aqi <= 300 else
+        "Very Poor" if aqi <= 400 else
+        "Severe"
+    )
 
-def get_aqi_category(aqi: float) -> str:
-    if aqi <= 50:
-        return "Good"
-    elif aqi <= 100:
-        return "Satisfactory"
-    elif aqi <= 200:
-        return "Moderate"
-    elif aqi <= 300:
-        return "Poor"
-    elif aqi <= 400:
-        return "Very Poor"
-    return "Severe"
-
-# ---------------- PREDICT ----------------
+# ---- PREDICT ----
 @app.post("/predict", response_model=AQIResponse)
-def predict_aqi(data: AQIRequest, db: Session = Depends(get_db)):
-    state = normalize(data.state, {})
-    location = normalize(data.location, LOCATION_MAP)
-    area_type = normalize(data.area_type, AREA_TYPE_MAP)
+def predict(data: AQIRequest, db: Session = Depends(get_db)):
+    try:
+        X = np.array([[
+            data.so2, data.no2, data.rspm,
+            safe_encode(state_encoder, data.state),
+            safe_encode(location_encoder, LOCATION_MAP.get(data.location, data.location)),
+            safe_encode(type_encoder, AREA_TYPE_MAP.get(data.area_type, data.area_type)),
+        ]])
 
-    X = np.array([[
-        data.so2,
-        data.no2,
-        data.rspm,
-        safe_encode(state_encoder, state),
-        safe_encode(location_encoder, location),
-        safe_encode(type_encoder, area_type),
-    ]])
+        predicted = float(model.predict(X)[0])
+        category = get_aqi_category(predicted)
 
-    predicted_aqi = float(model.predict(X)[0])
-    category = get_aqi_category(predicted_aqi)
+        db.add(Prediction(
+            state=data.state,
+            location=data.location,
+            area_type=data.area_type,
+            so2=data.so2,
+            no2=data.no2,
+            rspm=data.rspm,
+            predicted_aqi=predicted,
+            category=category,
+        ))
+        db.commit()
 
-    # ✅ STORE PREDICTION
-    db.add(Prediction(
-        state=state,
-        location=location,
-        area_type=area_type,
-        so2=data.so2,
-        no2=data.no2,
-        rspm=data.rspm,
-        predicted_aqi=predicted_aqi,
-        category=category,
-    ))
-    db.commit()
+        return {"predicted_aqi": predicted, "aqi_category": category}
 
-    return {
-        "predicted_aqi": predicted_aqi,
-        "aqi_category": category
-    }
+    except Exception as e:
+        print("PREDICT ERROR:", e)
+        raise HTTPException(status_code=500, detail="Prediction failed")
 
-# ---------------- DASHBOARD ----------------
+# ---- DASHBOARD ----
 @app.get("/dashboard")
 def dashboard(db: Session = Depends(get_db)):
-    total_predictions = db.query(Prediction).count()
+    try:
+        total = db.query(Prediction).count()
+        if total == 0:
+            return {
+                "success": True,
+                "data": {
+                    "latestAQI": 0,
+                    "category": "Unknown",
+                    "healthRisk": "No data",
+                    "lastUpdated": None,
+                    "trend": 0,
+                    "stats": {
+                        "predictions": 0,
+                        "citiesMonitored": 0,
+                        "alertsIssued": 0,
+                    },
+                },
+            }
 
-    # ✅ SAFE EMPTY STATE (prevents 500)
-    if total_predictions == 0:
+        latest = db.query(Prediction).order_by(Prediction.created_at.desc()).first()
+        avg = db.query(func.avg(Prediction.predicted_aqi)).scalar()
+
         return {
             "success": True,
             "data": {
-                "latestAQI": 0,
-                "category": "Unknown",
-                "healthRisk": "No data yet",
-                "lastUpdated": None,
+                "latestAQI": round(latest.predicted_aqi, 2),
+                "category": latest.category,
+                "healthRisk": "Based on AQI",
+                "lastUpdated": latest.created_at.isoformat(),
                 "trend": 0,
                 "stats": {
-                    "predictions": 0,
-                    "citiesMonitored": 0,
-                    "alertsIssued": 0,
+                    "predictions": total,
+                    "citiesMonitored": db.query(Prediction.location).distinct().count(),
+                    "alertsIssued": total,
                 },
             },
         }
 
-    cities_monitored = db.query(Prediction.location).distinct().count()
+    except Exception as e:
+        print("DASHBOARD ERROR:", e)
+        raise HTTPException(status_code=500, detail="Dashboard failed")
 
-    latest = (
-        db.query(Prediction)
-        .order_by(Prediction.created_at.desc())
-        .first()
-    )
-
-    now = datetime.utcnow()
-    last_7 = now - timedelta(days=7)
-    prev_14 = now - timedelta(days=14)
-
-    current_avg = db.query(func.avg(Prediction.predicted_aqi)) \
-        .filter(Prediction.created_at >= last_7).scalar()
-
-    previous_avg = db.query(func.avg(Prediction.predicted_aqi)) \
-        .filter(
-            Prediction.created_at >= prev_14,
-            Prediction.created_at < last_7
-        ).scalar()
-
-    trend = 0
-    if current_avg and previous_avg and previous_avg != 0:
-        trend = round(((previous_avg - current_avg) / previous_avg) * 100, 2)
-
-    return {
-        "success": True,
-        "data": {
-            "latestAQI": round(latest.predicted_aqi, 2),
-            "category": latest.category,
-            "healthRisk": "Based on latest AQI prediction",
-            "lastUpdated": latest.created_at.isoformat(),
-            "trend": trend,
-            "stats": {
-                "predictions": total_predictions,
-                "citiesMonitored": cities_monitored,
-                "alertsIssued": total_predictions,
-            },
-        },
-    }
-
-# ---------------- METADATA ----------------
-@app.get("/metadata")
-def metadata():
-    return {
-        "states": list(state_encoder.classes_),
-        "locations": list(location_encoder.classes_),
-        "area_types": list(type_encoder.classes_),
-    }
-
-# ---------------- AUTH ----------------
-@app.post("/signup")
-def signup(name: str, email: str, password: str, db: Session = Depends(get_db)):
-    if db.query(User).filter(User.email == email).first():
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    user = User(
-        name=name,
-        email=email,
-        password_hash=hash_password(password),
-    )
-
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    return {"success": True, "message": "User registered successfully"}
-
-@app.post("/login")
-def login(email: str, password: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email).first()
-
-    if not user or not verify_password(password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    return {
-        "success": True,
-        "user": {
-            "id": user.id,
-            "name": user.name,
-            "email": user.email,
-        },
-    }
-
-# ---------------- HEALTH ----------------
+# ---- HEALTH ----
 @app.get("/health")
-def health_check():
+def health():
     return {"status": "ok"}

@@ -1,4 +1,8 @@
-from database import engine
-from models import Base
+from database import engine, Base
+from models import Prediction, User
 
-Base.metadata.create_all(bind=engine)
+def init_db():
+    Base.metadata.create_all(bind=engine)
+
+if __name__ == "__main__":
+    init_db()
