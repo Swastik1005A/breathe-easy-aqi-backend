@@ -205,3 +205,7 @@ def login(
             "email": user.email
         }
     }
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
