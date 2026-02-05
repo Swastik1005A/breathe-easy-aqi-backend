@@ -135,3 +135,12 @@ def dashboard(db: Session = Depends(get_db)):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+# ---------------- METADATA ----------------
+@app.get("/metadata")
+def metadata():
+    return {
+        "states": list(state_encoder.classes_),
+        "locations": list(location_encoder.classes_),
+        "area_types": list(type_encoder.classes_),
+    }
