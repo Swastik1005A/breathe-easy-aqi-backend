@@ -92,17 +92,17 @@ def predict_aqi(data: AQIRequest, db: Session = Depends(get_db)):
     predicted_aqi = float(model.predict(X)[0])
     category = get_aqi_category(predicted_aqi)
 
-    db.add(Prediction(
-        state=state,
-        location=location,
-        area_type=area_type,
-        so2=data.so2,
-        no2=data.no2,
-        rspm=data.rspm,
-        predicted_aqi=predicted_aqi,
-        category=category,
-    ))
-    db.commit()
+    # db.add(Prediction(
+    #     state=state,
+    #     location=location,
+    #     area_type=area_type,
+    #     so2=data.so2,
+    #     no2=data.no2,
+    #     rspm=data.rspm,
+    #     predicted_aqi=predicted_aqi,
+    #     category=category,
+    # ))
+    # db.commit()
 
     return {"predicted_aqi": predicted_aqi, "aqi_category": category}
 
