@@ -1,33 +1,29 @@
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-DATABASE_USER = "root"
-DATABASE_PASSWORD = "root123"
-DATABASE_HOST = "localhost"
-DATABASE_PORT = "3306"
-DATABASE_NAME = "aqi_db"
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_NAME = os.getenv("DB_NAME")
 
-SQLALCHEMY_DATABASE_URL = (
-    f"mysql+pymysql://{DATABASE_USER}:{DATABASE_PASSWORD}"
-    f"@{DATABASE_HOST}:{DATABASE_PORT}/{DATABASE_NAME}"
+DATABASE_URL = (
+    f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}"
+    f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 )
 
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    echo=True,
-    pool_pre_ping=True
+    DATABASE_URL,
+    pool_pre_ping=True,
+    connect_args={
+        "ssl": {"ssl_mode": "REQUIRED"}
+    }
 )
 
-SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine
-)
-
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-
-# ✅ ADD THIS FUNCTION
 def get_db():
     db = SessionLocal()
     try:
