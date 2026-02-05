@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+
+# Database
+*.db
+
+# ML artifacts (optional – keep if you want)
+# *.pkl
+
+# OS
+.DS_Store
