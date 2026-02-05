@@ -19,7 +19,7 @@ app = FastAPI(title="AQI Prediction API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://breathe-easy-aqi-frontend-sxk8.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
