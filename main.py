@@ -20,9 +20,15 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 app = FastAPI(title="AQI Prediction API")
 
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://breathe-easy-aqi-frontend-sxk8.vercel.app"],
+    allow_origins=[
+        "https://breathe-easy-aqi-frontend-sxk8.vercel.app",
+        "http://localhost:5173",   # for local dev
+        "http://localhost:3000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
