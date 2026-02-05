@@ -10,3 +10,5 @@ sqlalchemy-utils
 pymysql
 passlib[bcrypt]
 python-multipart
+requests
+python-dotenv

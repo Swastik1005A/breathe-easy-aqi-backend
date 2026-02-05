@@ -4,16 +4,23 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
 import joblib, numpy as np, os
+import requests
+from dotenv import load_dotenv
+
 from models import Prediction, User
 from schemas import AQIRequest, AQIResponse
 from database import get_db, Base, engine
-
 from auth_utils import hash_password, verify_password
+
+# ---- LOAD ENV ----
+load_dotenv()
 
 # ---- INIT DB (CRITICAL) ----
 Base.metadata.create_all(bind=engine)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+AQICN_TOKEN = os.getenv("AQICN_TOKEN")
+
 app = FastAPI(title="AQI Prediction API")
 
 app.add_middleware(
@@ -136,7 +143,7 @@ def dashboard(db: Session = Depends(get_db)):
 def health():
     return {"status": "ok"}
 
-# ---------------- METADATA ----------------
+# ---- METADATA ----
 @app.get("/metadata")
 def metadata():
     return {
@@ -144,3 +151,19 @@ def metadata():
         "locations": list(location_encoder.classes_),
         "area_types": list(type_encoder.classes_),
     }
+
+# ---- AQI TRENDS (NEW & REQUIRED) ----
+@app.get("/aqi-trends/{city}")
+def get_aqi_trends(city: str):
+    if not AQICN_TOKEN:
+        raise HTTPException(status_code=500, detail="AQICN token not configured")
+
+    url = f"https://api.waqi.info/feed/{city}/?token={AQICN_TOKEN}"
+
+    try:
+        response = requests.get(url, timeout=10)
+        data = response.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return data
