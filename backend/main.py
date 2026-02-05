@@ -14,6 +14,9 @@ from sqlalchemy.orm import Session
 from auth_utils import hash_password, verify_password
 from models import User
 from database import get_db
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 app = FastAPI(title="AQI Prediction API")
 
@@ -25,10 +28,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-model = joblib.load("ml/aqi_model.pkl")
-state_encoder = joblib.load("state_encoder.pkl")
-location_encoder = joblib.load("location_encoder.pkl")
-type_encoder = joblib.load("type_encoder.pkl")
+model = joblib.load(os.path.join(BASE_DIR, "ml/aqi_model.pkl"))
+state_encoder = joblib.load(os.path.join(BASE_DIR, "state_encoder.pkl"))
+location_encoder = joblib.load(os.path.join(BASE_DIR, "location_encoder.pkl"))
+type_encoder = joblib.load(os.path.join(BASE_DIR, "type_encoder.pkl"))
 
 LOCATION_MAP = {
     "New Delhi": "Delhi",
